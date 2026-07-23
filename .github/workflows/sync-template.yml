@@ -1,0 +1,60 @@
+name: Sync from template repo
+
+on:
+  workflow_dispatch:
+    inputs:
+      template_branch:
+        description: 'Branch on template repo to sync from'
+        required: false
+        default: 'main'
+
+env:
+  TEMPLATE_REPO: tgs-byoung/fork-test
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0    # need full history for merge
+
+      - name: Configure git
+        run: |
+          git config user.name "template-sync-bot"
+          git config user.email "actions@github.com"
+
+      - name: Add template remote
+        run: git remote add template https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ env.TEMPLATE_REPO }}.git
+
+      - name: Fetch template
+        run: git fetch template
+
+      - name: Create sync branch
+        run: git checkout -b sync/template-updates
+
+      - name: Merge template changes
+        id: merge
+        run: |
+          git merge template/${{ github.event.inputs.template_branch }} --allow-unrelated-histories --no-edit || {
+            echo "conflict=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          }
+          echo "conflict=false" >> "$GITHUB_OUTPUT"
+
+      - name: Push sync branch
+        run: git push origin sync/template-updates --force
+
+      - name: Open PR
+        uses: peter-evans/create-pull-request@v6
+        with:
+          branch: sync/template-updates
+          title: "Sync changes from template repo"
+          body: |
+            Automated sync from `${{ env.TEMPLATE_REPO }}` (branch: `${{ github.event.inputs.template_branch }}`).
+            ${{ steps.merge.outputs.conflict == 'true' && '⚠️ Merge conflicts detected — resolve manually before merging.' || '' }}
+          base: main
